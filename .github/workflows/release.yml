@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate tag matches package version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit(f"Invalid tag format: {tag}")
+
+          with open("pyproject.toml", "rb") as f:
+              project = tomllib.load(f)["project"]
+
+          package_version = project["version"]
+          expected_tag = f"v{package_version}"
+          if tag != expected_tag:
+              raise SystemExit(
+                  f"Release tag {tag} does not match pyproject version {expected_tag}"
+              )
+
+          print(f"Validated tag {tag} against package version {package_version}")
+          PY
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]' build
+
+      - name: Run tests
+        shell: bash
+        run: |
+          pytest tests/ -q
+
+      - name: Run lint
+        shell: bash
+        run: |
+          ruff check src/ tests/
+
+      - name: Build package artifacts
+        shell: bash
+        run: |
+          python -m build
+          ls -l dist
+
+      - name: Verify build artifacts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          dist = Path("dist")
+          files = sorted(p.name for p in dist.iterdir() if p.is_file())
+          if not files:
+              raise SystemExit("No distribution artifacts were created")
+
+          print("Artifacts:")
+          for name in files:
+              print(f"- {name}")
+          PY
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

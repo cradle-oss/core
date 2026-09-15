@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "core"
+version = "0.4.0"
+description = "CORE - A terminal-native developer agent and toolchain workbench"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "CORE Contributors" }]
+dependencies = [
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "gitpython>=3.1.0",
+    "beautifulsoup4>=4.12.0",
+    "html2text>=2024.2.26",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+core = "core.cli:main"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
