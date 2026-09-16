@@ -365,6 +365,12 @@ class AgentLoop:
                 tool_result_text = ""
                 if result.success:
                     tool_result_text = truncated_output
+                elif result.output:
+                    tool_result_text = (
+                        f"{result.error}\n{truncated_output}"
+                        if result.error
+                        else truncated_output
+                    )
                 elif result.error:
                     tool_result_text = f"ERROR: {result.error}"
                 else:

@@ -8,11 +8,11 @@ CORE is a terminal-native developer agent and toolchain workbench for understand
 - find relevant code using repository search and definition lookup
 - reason across Git, GitHub, and web context
 - operate with bounded evidence and explicit verification
-- support safe file edits behind approval and review the resulting diff
+- make safe file edits behind approval and review the resulting diff
 
 ## Status
 
-This repository is the working CORE source tree for the v0.4.0 milestone.
+This repository is the working CORE source tree (current version in `pyproject.toml`; check it at runtime with `core --version`).
 
 ## Local development
 
@@ -24,5 +24,5 @@ This repository is the working CORE source tree for the v0.4.0 milestone.
 
 ## Notes
 
-- This repository is not yet published to GitHub as the first public CORE release.
+- This repository has not yet been published to GitHub as the first public CORE release.
 - The project is designed for local execution and inspection, with real verification before publication.

@@ -90,3 +90,67 @@ jobs:
           files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  tap:
+    needs: release
+    runs-on: ubuntu-latest
+    # Long-term: keeps homebrew-core in sync without the manual SHA dance.
+    # Requires repo secret HOMEBREW_TAP_TOKEN (PAT with repo scope for cradle-oss/homebrew-core).
+    # If the secret is absent, this job no-ops and ./scripts/bump.sh remains the tap path.
+    permissions:
+      contents: read
+    steps:
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN not set — skipping tap sync (use ./scripts/bump.sh locally)"
+            exit 0
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Not a version tag: $TAG — skipping"
+            exit 0
+          fi
+          TARBALL_URL="https://github.com/cradle-oss/core/archive/refs/tags/${TAG}.tar.gz"
+          echo "Waiting for tarball $TARBALL_URL..."
+          for i in 1 2 3 4 5 6; do
+            if curl -sL --fail -o /tmp/core-${TAG}.tar.gz "$TARBALL_URL"; then
+              break
+            fi
+            sleep 5
+          done
+          SHA="$(shasum -a 256 /tmp/core-${TAG}.tar.gz | awk '{print $1}')"
+          export SHA
+          echo "SHA256 $SHA"
+
+          # Clone tap repo
+          gh repo clone cradle-oss/homebrew-core /tmp/homebrew-core
+          FORMULA="/tmp/homebrew-core/Formula/core.rb"
+          python3 <<PY
+          import pathlib, re, os
+          tag = os.environ["TAG"]
+          sha = os.environ["SHA"]
+          p = pathlib.Path("/tmp/homebrew-core/Formula/core.rb")
+          t = p.read_text()
+          t = re.sub(r'url "https://github.com/cradle-oss/core/archive/refs/tags/v[^"]+"',
+                     f'url "https://github.com/cradle-oss/core/archive/refs/tags/{tag}.tar.gz"', t)
+          t = re.sub(r'sha256 "[a-f0-9]{64}"', f'sha256 "{sha}"', t)
+          p.write_text(t)
+          print("formula patched")
+          PY
+          ruby -c "$FORMULA"
+          cd /tmp/homebrew-core
+          git config user.name "CORE Contributors"
+          git config user.email "contributors@core.dev"
+          if git diff --quiet -- Formula/core.rb; then
+            echo "Tap already up to date"
+            exit 0
+          fi
+          git add Formula/core.rb
+          git commit -m "Publish CORE ${TAG} publication"
+          git push origin main
+          echo "Tap updated to $TAG"

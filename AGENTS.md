@@ -86,8 +86,10 @@ Web access is a first-class capability, not a single "fetch URL" tool. It partic
 # Format
 .venv/bin/ruff format src/ tests/
 
-# Run CORE (requires OPENAI_API_KEY)
-export OPENAI_API_KEY=sk-...
+# Run CORE (configure provider first; see Provider section below)
+export OPENROUTER_API_KEY=sk-or-...   # default: openrouter/auto routing
+# export OPENAI_API_KEY=sk-...        # alternate: direct OpenAI
+# export CORE_MODEL=<model>           # optional explicit override
 .venv/bin/core run "inspect this repository"
 .venv/bin/core run --mode deep "add a test for main function"
 .venv/bin/core run --deep "trace how deploy errors propagate"
@@ -144,6 +146,27 @@ Understanding:
 
 ---
 
+## Provider / Model Configuration
+
+Deterministic resolution order (see `src/core/model/provider.py`):
+
+1. An explicit model (the `--model` flag or `CORE_MODEL` env var) picks the
+   provider by prefix: `openrouter/*` requires `OPENROUTER_API_KEY`, any
+   other model requires `OPENAI_API_KEY`.
+2. Otherwise, if `OPENROUTER_API_KEY` is set, use OpenRouter with the default
+   `openrouter/auto` route (adaptive routing; the actual model is reported in
+   the run and in evidence via `provider.last_actual_model`).
+3. Otherwise, if `OPENAI_API_KEY` is set, use direct OpenAI with the current
+   flagship model (`gpt-6-astra`).
+4. Otherwise, fail clearly with setup instructions (no API keys are ever
+   logged or committed; `.env.example` documents the configuration).
+
+OpenRouter and direct OpenAI both speak the OpenAI-compatible chat
+completions API with tool calling, so the existing provider architecture and
+agent loop are unchanged by provider selection.
+
+---
+
 ## Verification Expectations
 After any code change:
 1. Show what was changed (`git diff` or file read).
@@ -154,8 +177,9 @@ After any code change:
 
 ---
 
-## Known Limitations (v0.4.0)
-- Only OpenAI-compatible models supported (gpt-4 etc).
+## Known Limitations (v0.4.1)
+- Model-backed execution is not yet proven end-to-end on a foreign repository
+  (blocked on available credentials for the foreign-repo test loop).
 - No streaming output.
 - No parallel tool execution.
 - No agent-to-agent collaboration.
@@ -200,13 +224,19 @@ After any code change:
 ---
 
 ## Version
-Current: **0.4.0**
+Current: **0.4.1**
 
 SemVer: Renamed from VERTEX to CORE. CORE is a terminal-native developer agent and toolchain workbench. VERTEX was the earlier browser-first system whose operating philosophy (evidence over claims, bounded context, observable work, honest failure states, real verification, calm terminal UX) CORE was built on. The name change reflects an actual change in scope: CORE is no longer primarily a UI around model calls but a coherent system where the agent, tools, repository context, Git, GitHub, web, deployment, and verification form one shared context. All source paths, CLI commands, session directories (`~/.core/sessions/`), environment variables (`CORE_SEARCH_API_KEY`, `CORE_SEARCH_ENDPOINT`, `CORE_MODEL`), and user-facing strings now use CORE. Historical VERTEX entries in `ENGINEERING_RECORD.md` are preserved as-is.
 
 ---
 
 ## Next milestone: prove CORE is execution-capable
+
+Status (v0.4.1): the provider layer now supports OpenRouter `openrouter/auto`
+and direct OpenAI with deterministic precedence, and the model/tool-call loop
+is verified by tests. The remaining blocker is an available API key
+(`OPENROUTER_API_KEY` or `OPENAI_API_KEY`) to run the real model-backed loop
+on a foreign repository; with credentials set, run the documented loop below.
 
 The next milestone is the important one: prove CORE can execute in a foreign repository rather than merely inspect one.
 
@@ -241,20 +271,26 @@ This is the right next test for CORE.
 
 ---
 
-## Release automation (pre-publication)
+## Release automation
 
-CORE uses SemVer and tag-based releases. The initial release workflow is intentionally minimal: GitHub Actions validates a tag, runs the existing checks, builds the Python distribution, and creates a GitHub Release with the generated artifacts. It does not publish to PyPI yet.
+CORE uses SemVer and tag-based releases. The release workflow validates the tag, runs checks, builds the Python distribution, creates a GitHub Release with artifacts, and (when configured) syncs the Homebrew tap. It does not publish to PyPI yet.
 
 Versioning convention:
-- package version comes from `pyproject.toml`
-- git tags use the `vX.Y.Z` format, for example `v0.4.0`
-- the workflow refuses to continue if the tag does not exactly match `pyproject.toml` (for example, `v0.4.0` must match version `0.4.0`)
+- package version comes from `pyproject.toml` (and `src/core/__init__.py`, kept in sync)
+- git tags use the `vX.Y.Z` format matching the current `pyproject.toml` version
+- the workflow refuses to continue if the tag does not exactly match `pyproject.toml` (tag `vX.Y.Z` must match `version = "X.Y.Z"`)
 
-Release flow:
-1. create a SemVer tag locally, e.g. `git tag v0.4.0`
-2. push the tag to GitHub: `git push origin v0.4.0`
-3. GitHub Actions runs the release workflow
-4. the workflow verifies the tag/package version, runs `pytest` and `ruff check`, builds the package, and publishes a GitHub Release with the generated `dist/*` artifacts
+Preferred release flow (one command, long-term):
+```bash
+./scripts/bump.sh vX.Y.Z   # patches version files, verifies, commits, tags, pushes, creates Release, updates tap
+```
+
+Manual release flow (still supported):
+1. update `pyproject.toml` + `src/core/__init__.py` to `X.Y.Z`
+2. create a SemVer tag locally matching `pyproject.toml`, e.g. `git tag vX.Y.Z`
+3. push the tag to GitHub: `git push origin vX.Y.Z`
+4. GitHub Actions runs the release workflow
+5. the workflow verifies the tag/package version, runs `pytest` and `ruff check`, builds the package, publishes a GitHub Release with `dist/*`, and syncs the tap if `HOMEBREW_TAP_TOKEN` is set
 
 What CI verifies:
 - tag format is valid (`vX.Y.Z`)
@@ -264,10 +300,11 @@ What CI verifies:
 - package builds successfully (`python -m build`)
 - at least one artifact is created in `dist/`
 
+Tap sync:
+- local: `scripts/bump.sh` patches `homebrew-core/Formula/core.rb` (url + sha256), verifies with two tarball downloads, commits and pushes `cradle-oss/homebrew-core`
+- CI: `tap` job in `release.yml` does the same after `release` — requires repo secret `HOMEBREW_TAP_TOKEN` (PAT with `repo` scope for `cradle-oss/homebrew-core`). If the secret is absent, the job no-ops and the local bump path remains.
+
 What is deliberately not automated yet:
 - no PyPI publish step
-- no automatic tag creation from `main`
-- no automatic version bumping
-- no release automation beyond GitHub Release + artifact generation
 
-This is the correct release discipline for the current phase: small, explicit, and evidence-based. The repository is not published until the release process is verified and the first public release is explicitly approved.
+This is the correct release discipline for the current phase: small, explicit, and evidence-based.

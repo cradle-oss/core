@@ -1,7 +1,6 @@
 """CORE CLI entry point."""
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -11,7 +10,12 @@ from core import __version__
 from core.agent.loop import MODE_ITERATIONS, AgentLoop
 from core.agent.state import load_recent_session
 from core.integrations.discovery import discover_integrations
-from core.model.provider import OpenAIProvider
+from core.model.provider import (
+    OpenAIProvider,
+    ProviderConfig,
+    ProviderConfigError,
+    resolve_provider_config,
+)
 from core.ui.terminal import TerminalUI
 
 
@@ -38,8 +42,9 @@ def _resolve_root(ctx, param, value):
 )
 @click.option(
     "--model",
-    default=os.environ.get("CORE_MODEL", "gpt-4"),
-    help="Model to use. Defaults to CORE_MODEL env var or gpt-4.",
+    default=None,
+    help="Model override. Defaults to CORE_MODEL, else openrouter/auto "
+    "when OPENROUTER_API_KEY is set, else gpt-6-astra with OPENAI_API_KEY.",
 )
 @click.option(
     "--verbose",
@@ -64,19 +69,27 @@ def cli(ctx, root, model, verbose, trace):
     ctx.obj["trace"] = trace
 
 
+def _resolve_provider_or_exit(
+    model_arg: str | None,
+) -> tuple[OpenAIProvider, ProviderConfig]:
+    """Resolve the model provider or exit with setup instructions."""
+    try:
+        config = resolve_provider_config(model_arg)
+    except ProviderConfigError as e:
+        click.echo(f"CORE cannot reach a model: {e}", err=True)
+        sys.exit(1)
+    provider = OpenAIProvider(
+        model=config.requested_model,
+        api_key=config.api_key,
+        base_url=config.base_url,
+        provider=config.provider,
+    )
+    return provider, config
+
+
 def _make_agent(ctx, mode: str = "investigate") -> AgentLoop:
     """Construct an AgentLoop from CLI context."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        click.echo(
-            "CORE requires OPENAI_API_KEY environment variable.\n"
-            "Set it before running core:\n"
-            "  export OPENAI_API_KEY=sk-...",
-            err=True,
-        )
-        sys.exit(1)
-
-    provider = OpenAIProvider(model=ctx.obj["model"], api_key=api_key)
+    provider, _ = _resolve_provider_or_exit(ctx.obj["model"])
     return AgentLoop(
         provider=provider,
         root=ctx.obj["root"],
@@ -146,7 +159,9 @@ def run(
         mode = "deep"
 
     ui = TerminalUI(verbose=ctx.obj["verbose"], trace=ctx.obj["trace"])
+    provider, config = _resolve_provider_or_exit(ctx.obj["model"])
     ui.info(f"CORE v{__version__} working in {ctx.obj['root']}  [mode: {mode}]")
+    ui.info(f"Provider: {config.provider}, requested model: {config.requested_model}")
 
     if non_interactive:
         interactive = False
@@ -154,10 +169,7 @@ def run(
         interactive = True
 
     agent = AgentLoop(
-        provider=OpenAIProvider(
-            model=ctx.obj["model"],
-            api_key=os.environ.get("OPENAI_API_KEY"),
-        ),
+        provider=provider,
         root=ctx.obj["root"],
         verbose=ctx.obj["verbose"],
         trace=ctx.obj["trace"],
@@ -178,6 +190,8 @@ def run(
         ui.warning("Interrupted by user.")
         sys.exit(130)
 
+    if provider.last_actual_model:
+        ui.info(f"Model used: {provider.last_actual_model}")
     agent.log_session()
 
 
@@ -367,19 +381,13 @@ def pr_review(ctx, pr: str | None, repo: str | None):
         click.echo("Provide a PR number, URL, or '#number'.", err=True)
         sys.exit(1)
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        click.echo("CORE requires OPENAI_API_KEY.", err=True)
-        sys.exit(1)
-
     ui = TerminalUI(verbose=ctx.obj["verbose"], trace=ctx.obj["trace"])
+    provider, config = _resolve_provider_or_exit(ctx.obj["model"])
     ui.info(f"CORE v{__version__}: deep PR review of {pr}")
+    ui.info(f"Provider: {config.provider}, requested model: {config.requested_model}")
 
     agent = AgentLoop(
-        provider=OpenAIProvider(
-            model=ctx.obj["model"],
-            api_key=api_key,
-        ),
+        provider=provider,
         root=ctx.obj["root"],
         verbose=ctx.obj["verbose"],
         trace=ctx.obj["trace"],
@@ -421,6 +429,8 @@ def pr_review(ctx, pr: str | None, repo: str | None):
         ui.warning("Interrupted by user.")
         sys.exit(130)
 
+    if provider.last_actual_model:
+        ui.info(f"Model used: {provider.last_actual_model}")
     agent.log_session()
 
 
